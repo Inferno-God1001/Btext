@@ -1,0 +1,25 @@
+import builtins
+
+_original_print = builtins.print
+
+class ColorPrint:
+      
+    COLORS = {
+        'black': '\033[30m',
+        'red': '\033[31m',
+        'green': '\033[32m',
+        'yellow': '\033[33m',
+        'blue': '\033[34m',
+        'magenta': '\033[35m',
+        'cyan': '\033[36m',
+        'white': '\033[37m',
+        'reset': '\033[0m'
+    }
+    
+    @classmethod
+    def print(cls, *args, color='white', **kwargs):
+        color_code = cls.COLORS.get(color.lower(), cls.COLORS['white'])
+        text = ' '.join(str(arg) for arg in args)
+        _original_print(f"{color_code}{text}{cls.COLORS['reset']}", **kwargs)
+        
+builtins.print = ColorPrint.print
