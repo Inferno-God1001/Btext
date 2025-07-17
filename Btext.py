@@ -2,12 +2,14 @@ import builtins
 import random
 import time
 import sys
-import warnings
+from functools import partial
 
 _original_print = builtins.print
 _original_input = builtins.input
 
 class ColorPrint:
+    """Classe para impressão colorida com animações funcionais"""
+    
     COLORS = {
         'black': '\033[30m',
         'red': '\033[31m',
@@ -20,135 +22,91 @@ class ColorPrint:
         'reset': '\033[0m'
     }
     
-    @classmethod
-    def _get_color_func(cls, color_spec):
-        """Retorna uma função que, dado um texto, retorna o texto colorido.
-        
-        Se color_spec for do tipo 'random' ou 'random_col1_col2', retorna uma função que aplica cores aleatórias por caractere.
-        Caso contrário, retorna uma função que aplica a cor fixa.
-        """
-        if color_spec.startswith('random_'):
-            base_colors = color_spec[7:].split('_')
-            valid_colors = [c for c in base_colors if c in cls.COLORS]
-            if not valid_colors:
-                valid_colors = list(cls.COLORS.keys())
-            def random_func(text):
-                return ''.join(
-                    f"{cls.COLORS[random.choice(valid_colors)]}{char}{cls.COLORS['reset']}"
-                    for char in text
-                )
-            return random_func
-        elif color_spec == 'random':
-            def random_func(text):
-                return ''.join(
-                    f"{cls.COLORS[random.choice(list(cls.COLORS.keys()))]}{char}{cls.COLORS['reset']}"
-                    for char in text
-                )
-            return random_func
-        else:
-            color_code = cls.COLORS.get(color_spec.lower(), cls.COLORS['white'])
-            def fixed_func(text):
-                return f"{color_code}{text}{cls.COLORS['reset']}"
-            return fixed_func
-    
-    @classmethod
-    def _parse_delay(cls, delay):
+    @staticmethod
+    def _parse_delay(delay):
+        """Converte delay para segundos"""
         if isinstance(delay, (int, float)):
             return delay
         if isinstance(delay, str):
-            if delay.endswith('ms'):
-                return float(delay[:-2]) / 1000
-            elif delay.endswith('s'):
-                return float(delay[:-1])
-            else:
-                return float(delay)
-        return delay
+            if 'ms' in delay:
+                return float(delay.replace('ms', '')) / 1000
+            return float(delay.replace('s', ''))
+        return 0.1
     
     @classmethod
-    def _animate_segment(cls, segment, color_func, direction, delay):
-        """Anima um segmento de texto."""
+    def _get_color_func(cls, color):
+        """Retorna função de coloração baseada na especificação"""
+        if color.startswith('random_'):
+            colors = color[7:].split('_')
+            valid_colors = [c for c in colors if c in cls.COLORS]
+            if not valid_colors:
+                valid_colors = list(cls.COLORS.keys())
+            
+            def func(text):
+                return ''.join(f"{cls.COLORS[random.choice(valid_colors)]}{c}{cls.COLORS['reset']}" for c in text)
+            return func
+        
+        if color == 'random':
+            def func(text):
+                return ''.join(f"{cls.COLORS[random.choice(list(cls.COLORS.keys()))]}{c}{cls.COLORS['reset']}" for c in text)
+            return func
+        
+        color_code = cls.COLORS.get(color.lower(), cls.COLORS['white'])
+        return lambda text: f"{color_code}{text}{cls.COLORS['reset']}"
+    
+    @classmethod
+    def _animate(cls, text, color_func, direction, delay):
+        """Executa animação do texto"""
         delay_sec = cls._parse_delay(delay)
         if direction == 'left':
-            for i in range(1, len(segment)+1):
-                # Aplica a cor ao subsegmento que está sendo animado
-                colored_chunk = color_func(segment[:i])
-                sys.stdout.write('\r' + colored_chunk)
+            for i in range(1, len(text)+1):
+                sys.stdout.write('\r' + color_func(text[:i]))
                 sys.stdout.flush()
                 time.sleep(delay_sec)
             sys.stdout.write('\n')
-        elif direction == 'right':
-            # Para direita: começa vazio e vai preenchendo da direita para esquerda
-            n = len(segment)
-            for i in range(1, n+1):
-                colored_chunk = color_func(segment[n-i:])
-                sys.stdout.write('\r' + ' '*(n-i) + colored_chunk)
+        else:
+            spaces = ' ' * len(text)
+            for i in range(len(text)+1):
+                sys.stdout.write('\r' + spaces[:len(text)-i] + color_func(text[-i:] if i > 0 else ''))
                 sys.stdout.flush()
                 time.sleep(delay_sec)
             sys.stdout.write('\n')
     
     @classmethod
     def print(cls, *args, **kwargs):
-        # Extrai os parâmetros especiais
+        """Print com cores e animação funcionais"""
         color = kwargs.pop('color', 'white')
         animation = kwargs.pop('animation', False)
         direction = kwargs.pop('direction', 'left')
         delay = kwargs.pop('delay', '0.1s')
         
-        # Processa os argumentos para construir segmentos
-        segments = []
-        current_segment = []
-        current_color = color
+        # Processa todos os argumentos como texto
+        text = ' '.join(str(arg) for arg in args)
         
-        for arg in args:
-            if isinstance(arg, str) and arg.startswith('+color='):
-                # Encontrou uma mudança de cor
-                new_color = arg[7:]
-                # Adiciona o segmento atual
-                if current_segment:
-                    segments.append((''.join(current_segment), current_color))
-                    current_segment = []
-                current_color = new_color
-            else:
-                current_segment.append(str(arg))
+        # Remove marcadores de cor se existirem
+        text = text.replace('+color=', '')
         
-        if current_segment:
-            segments.append((''.join(current_segment), current_color))
+        color_func = cls._get_color_func(color)
+        colored_text = color_func(text)
         
-        # Se não houver segmentos, sai
-        if not segments:
-            _original_print(**kwargs)
-            return
-        
-        # Se animation estiver ativada, só pode ter um segmento
         if animation:
-            if len(segments) > 1:
-                warnings.warn("Animation is not supported for multi-color prints. Animation turned off.")
-                animation = False
-            else:
-                text, color_spec = segments[0]
-                color_func = cls._get_color_func(color_spec)
-                cls._animate_segment(text, color_func, direction, delay)
-                return
-        
-        # Caso contrário, constrói o texto colorido
-        colored_text = []
-        for seg, color_spec in segments:
-            color_func = cls._get_color_func(color_spec)
-            colored_text.append(color_func(seg))
-        
-        final_text = ''.join(colored_text)
-        _original_print(final_text, **kwargs)
+            cls._animate(text, color_func, direction, delay)
+        else:
+            _original_print(colored_text, **kwargs)
     
     @classmethod
-    def input(cls, prompt='', color='white', **kwargs):
+    def input(cls, prompt='', color='white'):
+        """Input colorido funcional"""
         color_func = cls._get_color_func(color)
         colored_prompt = color_func(prompt)
-        return _original_input(colored_prompt, **kwargs)
+        return _original_input(colored_prompt)
     
     @classmethod
-    def restore_all(cls):
+    def restore(cls):
+        """Restaura funções originais"""
         builtins.print = _original_print
         builtins.input = _original_input
 
+# Substitui as funções built-in
 builtins.print = ColorPrint.print
 builtins.input = ColorPrint.input
